@@ -1,0 +1,195 @@
+const { ethers } = require("hardhat");
+const { expect } = require("chai");
+
+describe("EventTicket", function () {
+  let EventTicket;
+  let owner;
+  let addr1;
+  let addr2;
+  let addrs;
+
+  beforeEach(async function () {
+    const EventTicketFactory = await ethers.getContractFactory("EventTicket");
+    [owner, addr1, addr2, ...addrs] = await ethers.getSigners();
+    EventTicket = await EventTicketFactory.deploy();
+    await EventTicket.waitForDeployment(); 
+  });
+
+  describe("Deployment", function () {
+
+    it("Should set the right owner", async function () {
+      expect(await EventTicket.owner()).to.equal(owner.address);
+    });
+
+    it("Should have the correct name and symbol", async function () {
+      expect(await EventTicket.name()).to.equal("EventTicket");
+      expect(await EventTicket.symbol()).to.equal("ETKT");
+    });
+  });
+
+  describe("Transactions", function () {
+
+    it("Should mint multiple NFTs with the same shared URI", async function () {
+        // Assume `EventTicket` is already deployed, and `owner` is the deployer
+        // Example shared URI
+        const sharedURI = "shared_base_uri";
+        
+        // Mint 1 NFT with the shared URI
+        await EventTicket.connect(owner).mintTicketsWithSharedURI(owner.address, 1, sharedURI);
+        expect(await EventTicket.balanceOf(owner.address)).to.equal(1);
+        expect(await EventTicket.tokenURI(0)).to.equal(sharedURI);
+    
+        // Mint 2 additional NFTs, also using the shared URI
+        await EventTicket.connect(owner).mintTicketsWithSharedURI(owner.address, 2, sharedURI);
+        expect(await EventTicket.balanceOf(owner.address)).to.equal(3);
+        expect(await EventTicket.tokenURI(1)).to.equal(sharedURI);
+        expect(await EventTicket.tokenURI(2)).to.equal(sharedURI);
+    });
+
+    it("Should mint NFTs with unique URIs", async function () {
+      await EventTicket.connect(owner).mintTickets(owner.address, 1, ["URI_1"]);
+      expect(await EventTicket.balanceOf(owner.address)).to.equal(1);
+
+      await EventTicket.connect(owner).mintTickets(owner.address, 2, ["URI_2", "URI_3"]);
+      expect(await EventTicket.balanceOf(owner.address)).to.equal(3);
+    });
+
+    it("Should update total supply when minted", async function () {
+      expect(await EventTicket.totalSupply()).to.equal(0);
+
+      await EventTicket.connect(owner).mintTickets(owner.address, 3, ["URI_4", "URI_5", "URI_6"]);
+      expect(await EventTicket.totalSupply()).to.equal(3);
+    });
+
+    it("Should fail if minted to zero address", async function () {
+      await expect(EventTicket.connect(owner).mintTickets("0x0000000000000000000000000000000000000000", 1, ["URI_1"]))
+        .to.be.revertedWith("EventTicket: cannot mint to the zero address");
+    });
+
+    it("Should fail if minted with zero quantity", async function () {
+      await expect(EventTicket.connect(owner).mintTickets(owner.address, 0, []))
+        .to.be.revertedWith("EventTicket: quantity must be greater than zero");
+    });
+
+    it("Should redeem NFTs", async function () {
+      // Get the current total supply which will also be the next token's ID since IDs start from 0
+      const currentTotal = await EventTicket.totalSupply();
+    
+      // Mint a new token
+      await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+    
+      // The new token's ID will be the current total supply (since token IDs start from 0)
+      const tokenId = currentTotal;
+    
+      // Now redeem the ticket
+      await EventTicket.connect(addr1).redeemTicket(tokenId, addr1.address);
+      expect(await EventTicket.isRedeemed(tokenId)).to.be.true;
+    });
+    
+    it("Should fail to redeem NFT if caller is not owner", async function () {
+      await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+      const tokenId = 1; // Assuming token with ID 1 is minted
+    
+      await expect(EventTicket.connect(addr2).redeemTicket(tokenId, addr1.address))
+        .to.be.revertedWithCustomError(EventTicket, 'Unauthorized')
+        .withArgs(tokenId, addr1.address);
+    });
+    
+    it("Should fail to redeem already redeemed NFT", async function () {
+      // Get the current total supply to determine the next token ID
+      const currentTotal = await EventTicket.totalSupply();
+    
+      // Mint the NFT
+      await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+    
+      // The token ID should be the previous total supply since token IDs start from 0
+      const tokenId = currentTotal;
+    
+      // Redeem the NFT for the first time
+      await EventTicket.connect(addr1).redeemTicket(tokenId, addr1.address);
+      expect(await EventTicket.isRedeemed(tokenId)).to.be.true;
+    
+      // Attempt to redeem the NFT a second time and expect it to fail
+      await expect(EventTicket.connect(addr1).redeemTicket(tokenId, addr1.address))
+        .to.be.revertedWithCustomError(EventTicket, 'Unauthorized')
+        .withArgs(tokenId, addr1.address);
+    });
+    
+    it("Should batch redeem NFTs", async function () {
+      // Get the current total supply which will indicate the starting token ID
+      const currentTotal = await EventTicket.totalSupply();
+    
+      // Mint 3 NFTs
+      await EventTicket.connect(owner).mintTickets(addr1.address, 3, ["URI_1", "URI_2", "URI_3"]);
+    
+      // Calculate the actual token IDs based on the current total supply
+      const tokenIds = [
+        currentTotal.toString(),
+        (currentTotal + 1n).toString(),
+        (currentTotal + 2n).toString()
+      ];    
+    
+      // Redeem the NFTs in bulk and expect TicketRedeemed event
+      await expect(EventTicket.connect(addr1).redeemTicketsInBulk(tokenIds, addr1.address))
+        .to.emit(EventTicket, 'TicketRedeemed');
+    
+      // Check ownership and redeemed status of the tokens after attempting to redeem
+      for (const tokenId of tokenIds) {
+        const owner = await EventTicket.ownerOf(tokenId);
+        const alreadyRedeemed = await EventTicket.isRedeemed(tokenId);
+        expect(owner).to.equal(addr1.address);
+        expect(alreadyRedeemed).to.be.true;
+      }
+    });
+    
+  });
+
+  describe("Events", function () {
+    it("Should emit TicketRedemptionAttempt when attempting to redeem", async function () {
+        await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+        const tokenId = await EventTicket.totalSupply() - 1n;
+        await expect(EventTicket.connect(addr1).redeemTicket(tokenId, addr1.address))
+            .to.emit(EventTicket, 'TicketRedemptionAttempt')
+            .withArgs(tokenId);
+    });
+
+    it("Should emit TicketRedeemed when a ticket is successfully redeemed", async function () {
+        await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+        const tokenId = await EventTicket.totalSupply() - 1n;
+        await expect(EventTicket.connect(addr1).redeemTicket(tokenId, addr1.address))
+            .to.emit(EventTicket, 'TicketRedeemed')
+            .withArgs(tokenId);
+    });
+
+    it("Should emit RedemptionFailed when redemption fails", async function () {
+      await EventTicket.connect(owner).mintTickets(addr1.address, 1, ["URI_1"]);
+      const tokenId = await EventTicket.totalSupply() - 1n;
+      // Intentionally trying to redeem with a wrong owner
+      await expect(EventTicket.connect(addr2).redeemTicket(tokenId, addr2.address))
+          .to.be.revertedWithCustomError(EventTicket, 'Unauthorized')
+          .withArgs(tokenId, addr2.address);
+    });
+    
+    it("Should emit RedemptionFailed for each token when batch redemption fails due to unauthorized access", async function () {
+      // Mint multiple NFTs to addr1
+      await EventTicket.connect(owner).mintTickets(addr1.address, 3, ["URI_1", "URI_2", "URI_3"]);
+      const startingTokenId = await EventTicket.totalSupply() - 3n;
+  
+      // Generate token IDs
+      const tokenIds = [
+          startingTokenId,
+          startingTokenId + 1n,
+          startingTokenId + 2n
+      ];
+  
+      // Prepare a batch call from an unauthorized address (addr2)
+      const batchRedeemCall = EventTicket.connect(addr2).redeemTicketsInBulk(tokenIds, addr2.address);
+  
+      for (const tokenId of tokenIds) {
+          await expect(batchRedeemCall)
+              .to.emit(EventTicket, 'RedemptionFailed')
+              .withArgs(tokenId, "EventTicket: Bulk redemption failed for this TokenID");
+      }
+    });  
+  });
+});

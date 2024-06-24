@@ -1,0 +1,11 @@
+{
+    "name": "Example NFT",
+    "description": "This is an example NFT with an image hosted on IPFS.",
+    "image": "ipfs://QmWJagva2tHzmJ56knhV6gSBzVjwPep9KT39W3kT7VxmAV",
+    "attributes": [
+        {
+            "trait_type": "Background",
+            "value": "Blue"
+        }
+    ]
+}
